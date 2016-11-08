@@ -1601,9 +1601,54 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
                ('PROCEDURAL_RUN_PROGRAM', 'Procedural Run Program',
                 'Generates procedural geometry at render time from an external program'),
                ('DYNAMIC_LOAD_DSO', 'Dynamic Load DSO',
-                'Generates procedural geometry at render time from a dynamic shared object library')
+                'Generates procedural geometry at render time from a dynamic shared object library'),
+               ('LEVELSET', 'Level Set',
+                'Renders a level set defined by an implicit field data structure.'),
+               ('SMOKE_VOLUME', 'Smoke Volume',
+                'Renders a volume filled with participating media defined by an implicit field data structure.'),
                ],
         default='BLENDER_SCENE_DATA')
+
+    path_plugin = StringProperty(
+        name="Plugin Path",
+        description="Path to plugin .so",
+        subtype='FILE_PATH',
+        default='')
+    
+    path_spgrid_datapath = StringProperty(
+        name="SPGrid Data",
+        description="Path to the SPGrid simulation data to render.",
+        subtype="FILE_PATH",
+        default='')
+
+    levelset_data = EnumProperty(
+        name = "Levelset Data Structure",
+        description = "Data format to read levelset from.",
+        items=[("SPGRID", 'SPGrid Data', 'Reads levelset information from a SPGrid file.'),
+               ("OPENVDB", 'OpenVDB Data', 'Reads levelset information from an OpenVDB file.')],
+        default="OPENVDB")
+
+    levelset_frame = IntProperty(
+        name="Frame",
+        description="Frame of the simulation to read data from.",
+        min=0, default=0)
+
+    smoke_volume_res = FloatVectorProperty(
+        name="Smoke Resolution",
+        description="Number of voxels in each dimension which define the smoke volume",
+        size=3,
+        default=[1.0, 1.0, 1.0])
+
+    path_openvdb_datapath = StringProperty(
+        name="OpenVDB Data",
+        description="Path to the OpenVDB simulation data to render.",
+        subtype="FILE_PATH",
+        default='')
+
+    openvdb_fieldname = StringProperty(
+        name="OpenVDB Field",
+        description="Field which holds levelset data from the OpenVDB file.",
+        default='density')
 
     archive_anim_settings = PointerProperty(
         type=RendermanAnimSequenceSettings,

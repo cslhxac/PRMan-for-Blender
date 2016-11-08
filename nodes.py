@@ -55,6 +55,7 @@ import os.path
 
 NODE_LAYOUT_SPLIT = 0.5
 
+import pdb
 
 def load_tree_from_lib(mat):
     if mat.library:
@@ -1020,20 +1021,15 @@ def gen_params(ri, node, mat_name=None):
             elif prop_name == "internalSearch" and fileInputType == 'INT':
                 if node.internalSearch != "":
                     script = bpy.data.texts[node.internalSearch]
-                    params['%s %s' % ("string",
-                                      "expression")] = \
-                        rib(script.as_string(),
-                            type_hint=meta['renderman_type'])
+                    params['string expression'] = rib(script.as_string(), type_hint=meta['renderman_type'])
+            elif prop_name == "expression":
+                pass # We skip this as the expression either comes from blender's text blocks or a file
             elif prop_name == "shadercode" and fileInputType == "EXT":
                 fileInput = user_path(getattr(node, 'shadercode'))
                 if fileInput != "":
-                    outputString = ""
-                    with open(fileInput, encoding='utf-8') as SeExprFile:
-                        for line in SeExprFile:
-                            outputString += line
                     params['%s %s' % ("string",
-                                      "expression")] = \
-                        rib(outputString, type_hint=meta['renderman_type'])
+                                      "filename")] = \
+                        rib(fileInput, type_hint=meta['renderman_type'])
             else:
                 prop = getattr(node, prop_name)
                 # if property group recurse
@@ -1145,6 +1141,7 @@ def shader_node_rib(ri, node, mat_name, disp_bound=0.0):
     instance = mat_name + '.' + node.name
     params['__instanceid'] = mat_name + '.' + node.name
     if node.renderman_node_type == "pattern":
+        print( params )
         ri.Pattern(node.bl_label, node.name, params)
     elif node.renderman_node_type == "light":
         light_group_name = ''

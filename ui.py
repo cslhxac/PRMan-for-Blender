@@ -989,13 +989,30 @@ class OBJECT_PT_renderman_object_geometry(Panel):
 
         if rm.geometry_source in ('DELAYED_LOAD_ARCHIVE',
                                   'PROCEDURAL_RUN_PROGRAM',
-                                  'DYNAMIC_LOAD_DSO'):
+                                  'DYNAMIC_LOAD_DSO',
+                                  'SMOKE_VOLUME'):
             col.prop(rm, "procedural_bounds")
 
             if rm.procedural_bounds == 'MANUAL':
                 colf = layout.column_flow()
                 colf.prop(rm, "procedural_bounds_min")
                 colf.prop(rm, "procedural_bounds_max")
+
+        if rm.geometry_source in ('LEVELSET','SMOKE_VOLUME'):
+            col.prop(rm,"levelset_data")
+            col.prop(rm,"path_plugin")
+
+            if rm.levelset_data == 'SPGRID':
+                col.prop(rm,"path_spgrid_datapath")
+                col.prop(rm,"levelset_frame")
+
+            if rm.levelset_data == 'OPENVDB':
+                col.prop(rm,"path_openvdb_datapath")
+                col.prop(rm,"openvdb_fieldname")
+                col.prop(rm,"levelset_frame")
+
+        if rm.geometry_source == "SMOKE_VOLUME":
+            col.prop(rm,"smoke_volume_res");
 
         if rm.geometry_source == 'BLENDER_SCENE_DATA':
             col.prop(rm, "primitive")

@@ -226,6 +226,11 @@ def is_deforming(ob):
     if ob.data and hasattr(ob.data, 'shape_keys') and ob.data.shape_keys:
         return True
 
+    if hasattr(ob, 'renderman'):
+        rm = ob.renderman
+        if rm.geometry_source in ('LEVELSET', 'SMOKE_VOLUME'):
+            return True;
+
     return is_deforming_fluid(ob)
 
 
@@ -870,7 +875,6 @@ def export_hair(ri, scene, ob, psys, data, objectCorrectionMatrix=False):
             params['uniform float scalpT'] = scalpT
         ri.Curves("cubic", vertsArray, "nonperiodic", params)
 
-
 def geometry_source_rib(ri, scene, ob):
     rm = ob.renderman
     anim = rm.archive_anim_settings
@@ -904,6 +908,60 @@ def geometry_source_rib(ri, scene, ob):
             path_dso = rib_path(rm.path_dso)
             ri.Procedural("DynamicLoad", [path_dso, rm.path_dso_initial_data],
                           rib(bounds))
+
+def export_levelset(ri, scene, ob):
+    rm = ob.renderman
+    anim = rm.archive_anim_settings
+    blender_frame = scene.frame_current
+
+    if rm.levelset_data == 'SPGRID':
+        ri.ShadingInterpolation("smooth")
+        ri.Blobby(1,  # Export 1 levelset
+                  [1004, 0, 1, 0, 1, 1], # Use the opcode for dynamic dso 
+                  (rm.levelset_frame,), # Current frame for the levelset
+                  (rm.path_plugin, rm.path_spgrid_datapath,), #Path to the dso and the data
+                  {"constant float levelset":(0.0,),}
+        ) # currently unused parameters
+
+    if rm.levelset_data == 'OPENVDB':
+        ri.ShadingInterpolation("smooth")
+        ri.Blobby(1,  # Export 1 levelset
+                  [1004, 0, 0, 0, 2, 1], # Use the opcode for dynamic dso 
+                  (0,), # Current frame for the levelset
+                  (rm.path_plugin, rm.path_openvdb_datapath, rm.openvdb_fieldname), #Path to the dso and the data
+                  {}
+        ) # currently unused parameters
+
+def export_smoke_volume(ri, scene, ob):
+    rm = ob.renderman
+    anim = rm.archive_anim_settings
+    blender_frame = scene.frame_current
+
+    bounds = []
+    if rm.procedural_bounds == 'MANUAL':
+        min = rm.procedural_bounds_min
+        max = rm.procedural_bounds_max
+        bounds = [min[0], max[0], min[1], max[1], min[2], max[2]]
+    else:
+        bounds = rib_ob_bounds(ob.bound_box)
+         
+    print( list(rm.smoke_volume_res) )
+    print( len( rib(tuple(rm.smoke_volume_res)) ) )
+    print( rib(tuple(rm.smoke_volume_res)))
+    if rm.levelset_data == 'OPENVDB':
+        #ri.ShadingInterpolation("smooth")
+        params = []
+        params.append( ("constant float[1] blobbydso:floatargs",[0,] ) )
+        params.append( ("constant string[2] blobbydso:stringargs",[rm.path_openvdb_datapath.format(rm.levelset_frame),
+                                                                   rm.openvdb_fieldname,] ))
+        params.append( ("constant float blobbydso:threshold", [0.01] ) )
+        params.append( ("varying float density", []) )
+               
+        ri.Volume("blobbydso:"+rm.path_plugin,  # plugin path
+                  bounds, # The bounds of the smoke volume
+                  rib(tuple([0, 0, 0])),
+                  dict(params),
+              ) # currently unused parameters
 
 
 def export_blobby_particles(ri, scene, psys, ob, motion_data):
@@ -1822,15 +1880,7 @@ def get_data_blocks_needed(ob, rpass, do_mb):
     if is_data_renderable(rpass.scene, ob) and emit_ob:
         # Check if the object is referring to an archive to use rather then its
         # geometry.
-        if ob.renderman.geometry_source != 'BLENDER_SCENE_DATA':
-            name = data_name(ob, rpass.scene)
-            deforming = is_deforming(ob)
-            archive_filename = bpy.path.abspath(ob.renderman.path_archive)
-            data_blocks.append(DataBlock(name, "MESH", archive_filename, ob,
-                                         deforming, material=get_used_materials(
-                                             ob),
-                                         do_export=False))
-        else:
+        if ob.renderman.geometry_source == 'BLENDER_SCENE_DATA':
             name = data_name(ob, rpass.scene)
             deforming = is_deforming(ob)
             archive_filename = get_archive_filename(data_name(ob, rpass.scene),
@@ -1839,6 +1889,32 @@ def get_data_blocks_needed(ob, rpass, do_mb):
                                          deforming, material=get_used_materials(
                                              ob),
                                          do_export=file_is_dirty(rpass.scene, ob, archive_filename)))
+        elif ob.renderman.geometry_source == "LEVELSET":
+            name = data_name(ob, rpass.scene)
+            deforming = is_deforming(ob)
+            archive_filename = get_archive_filename(data_name(ob, rpass.scene),
+                                                    rpass, deforming)
+            data_blocks.append(DataBlock(name, "LEVELSET", archive_filename, ob,
+                                         deforming, material=get_used_materials(
+                                             ob),
+                                         do_export=file_is_dirty(rpass.scene, ob, archive_filename)))
+        elif ob.renderman.geometry_source == "SMOKE_VOLUME":
+            name = data_name(ob, rpass.scene)
+            deforming = is_deforming(ob)
+            archive_filename = get_archive_filename(data_name(ob, rpass.scene),
+                                                    rpass, deforming)
+            data_blocks.append(DataBlock(name, "SMOKE_VOLUME", archive_filename, ob,
+                                         deforming, material=get_used_materials(
+                                             ob),
+                                         do_export=file_is_dirty(rpass.scene, ob, archive_filename)))
+        else:
+            name = data_name(ob, rpass.scene)
+            deforming = is_deforming(ob)
+            archive_filename = bpy.path.abspath(ob.renderman.path_archive)
+            data_blocks.append(DataBlock(name, "MESH", archive_filename, ob,
+                                         deforming, material=get_used_materials(
+                                             ob),
+                                         do_export=False))
 
     return data_blocks
 
@@ -1947,6 +2023,10 @@ def export_data_archives(ri, scene, rpass, data_blocks, engine):
             debug('info', db.archive_filename)
             if db.type == "MESH":
                 export_mesh_archive(ri, scene, db)
+            elif db.type == "LEVELSET":
+                export_levelset_archive(ri, scene, db)
+            elif db.type == "SMOKE_VOLUME":
+                export_smoke_volume_archive(ri, scene, db)
             elif db.type == "PSYS":
                 export_particle_archive(ri, scene, rpass, db)
             elif db.type == "DUPLI":
@@ -1980,6 +2060,10 @@ def export_RIBArchive_data_archive(ri, scene, rpass, data_blocks, exportMaterial
                 ri.Transform(rib(db.data.matrix_world))
                 ri.CoordinateSystem(db.name)
             export_mesh_archive(ri, scene, db)
+        elif db.type == "LEVELSET":
+            export_levelset_archive(ri, scene, db)
+        elif db.type == "SMOKE_VOLUME":
+            export_smoke_volume_archive(ri, scene, db)
         elif db.type == "PSYS":
             # ri.Transform(rib(Matrix.Identity(4)))
             export_particle_archive(ri, scene, rpass, db, correctionMatrix)
@@ -2029,6 +2113,10 @@ def export_data_read_archive(ri, data_block, rpass):
         params = {"string filename": archive_filename,
                   "float[6] bound": bounds}
         ri.Procedural2(ri.Proc2DelayedReadArchive, ri.SimpleBound, params)
+    elif data_block.type == "LEVELSET":
+        ri.ReadArchive(archive_filename)       
+    elif data_block.type == "SMOKE_VOLUME":
+        ri.ReadArchive(archive_filename)       
     else:
         if data_block.type != 'DUPLI':
             ri.Transform([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
@@ -2249,6 +2337,17 @@ def export_mesh_archive(ri, scene, data_block):
         ri.MotionEnd()
     else:
         export_geometry_data(ri, scene, ob)
+
+def export_levelset_archive(ri, scene, data_block):
+    ob = data_block.data
+    # This is very simple for now, as we don't support motion data yet...
+    export_levelset(ri, scene, ob)
+
+def export_smoke_volume_archive(ri, scene, data_block):
+    ob = data_block.data
+    # This is very simple for now, as we don't support motion data yet...
+    export_smoke_volume(ri, scene, ob)
+
 
 
 # export the archives for an mesh. If this is a
