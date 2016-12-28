@@ -1104,6 +1104,7 @@ class OBJECT_PT_renderman_object_geometry(Panel):
             if rm.levelset_data == 'SPGRID':
                 col.prop(rm,"path_spgrid_datapath")
                 col.prop(rm,"levelset_frame")
+                col.prop(rm,"using_fine_levelset")
 
             if rm.levelset_data == 'OPENVDB':
                 col.prop(rm,"path_openvdb_datapath")

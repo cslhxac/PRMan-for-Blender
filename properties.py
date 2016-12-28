@@ -1925,6 +1925,11 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         description="Frame of the simulation to read data from.",
         min=0, default=0)
 
+    using_fine_levelset = BoolProperty(
+        name="Use fine levelset",
+        description="Using fine levelset for rendering.",
+        default=False)
+
     smoke_volume_res = FloatVectorProperty(
         name="Smoke Resolution",
         description="Number of voxels in each dimension which define the smoke volume",
