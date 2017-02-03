@@ -1105,6 +1105,11 @@ class OBJECT_PT_renderman_object_geometry(Panel):
                 col.prop(rm,"path_spgrid_datapath")
                 col.prop(rm,"levelset_frame")
                 col.prop(rm,"using_fine_levelset")
+                col.prop(rm,"shrink_domain_x")
+                col.prop(rm,"shrink_domain_y")
+                col.prop(rm,"shrink_domain_z")
+                col.prop(rm,"cleanup_levelset_distance")
+                col.prop(rm,"cleanup_levelset")
 
             if rm.levelset_data == 'OPENVDB':
                 col.prop(rm,"path_openvdb_datapath")

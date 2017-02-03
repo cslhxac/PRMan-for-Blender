@@ -1930,6 +1930,31 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         description="Using fine levelset for rendering.",
         default=False)
 
+    shrink_domain_x = BoolProperty(
+        name="Shrink Domain in X",
+        description="Shrink the domain by half simulation grid",
+        default=False)
+
+    shrink_domain_y = BoolProperty(
+        name="Shrink Domain in Y",
+        description="Shrink the domain by half simulation grid",
+        default=False)
+
+    shrink_domain_z = BoolProperty(
+        name="Shrink Domain in Z",
+        description="Shrink the domain by half simulation grid",
+        default=False)
+
+    cleanup_levelset_distance = FloatProperty(
+        name="Distance for escaping fine levelset cleanup",
+        description="The distance within which fine levelset will be cleaned up(in unit of coarse levelset grid size).",
+        min=0,default=3)
+
+    cleanup_levelset = BoolProperty(
+        name="Cleanup fine levelset",
+        description="Remove escaping particles of the fine levelset (WARNING: Will result in noticable volume loss)",
+        default=False)
+
     smoke_volume_res = FloatVectorProperty(
         name="Smoke Resolution",
         description="Number of voxels in each dimension which define the smoke volume",

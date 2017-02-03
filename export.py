@@ -959,8 +959,9 @@ def export_levelset(ri, scene, ob):
     if rm.levelset_data == 'SPGRID':
         ri.ShadingInterpolation("smooth")
         ri.Blobby(1,  # Export 1 levelset
-                  [1004, 0, 2, 0, 1, 1], # Use the opcode for dynamic dso 
-                  (rm.levelset_frame,rm.using_fine_levelset,), # Current frame for the levelset
+                  [1004, 0, 7, 0, 1, 1], # Use the opcode for dynamic dso 
+                  (rm.levelset_frame,rm.using_fine_levelset,rm.shrink_domain_x,rm.shrink_domain_y,rm.shrink_domain_z,
+                   rm.cleanup_levelset_distance,rm.cleanup_levelset,), # Current frame for the levelset
                   (rm.path_plugin, rm.path_spgrid_datapath,), #Path to the dso and the data
                   {"constant float levelset":(0.0,),}
         ) # currently unused parameters
