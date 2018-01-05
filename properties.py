@@ -2020,16 +2020,14 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
                 'Renders a prevously exported RIB archive'),
                ('OPENVDB', 'OpenVDB File',
                 'Renders a prevously exported OpenVDB file'),
+               ('LEVELSET', 'Level Set',
+                'Renders a level set defined by an implicit field data structure.'),
                ('DELAYED_LOAD_ARCHIVE', 'Delayed Load Archive',
                 'Loads and renders geometry from an archive only when its bounding box is visible'),
                ('PROCEDURAL_RUN_PROGRAM', 'Procedural Run Program',
                 'Generates procedural geometry at render time from an external program'),
                ('DYNAMIC_LOAD_DSO', 'Dynamic Load DSO',
-                'Generates procedural geometry at render time from a dynamic shared object library'),
-               ('LEVELSET', 'Level Set',
-                'Renders a level set defined by an implicit field data structure.'),
-               ('SMOKE_VOLUME', 'Smoke Volume',
-                'Renders a volume filled with participating media defined by an implicit field data structure.'),
+                'Generates procedural geometry at render time from a dynamic shared object library')
                ],
         default='BLENDER_SCENE_DATA')
 
@@ -2049,10 +2047,27 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         name = "Levelset Data Structure",
         description = "Data format to read levelset from.",
         items=[("SPGRID", 'SPGrid Data', 'Reads levelset information from a SPGrid file.'),
+               ("TCB", 'TCB Data', 'Reads topology optimization result from .tcb file.'),
                ("OPENVDB", 'OpenVDB Data', 'Reads levelset information from an OpenVDB file.')],
         default="OPENVDB")
 
     levelset_frame = IntProperty(
+        name="Frame",
+        description="Frame of the simulation to read data from.",
+        min=0, default=0)
+
+    path_tcb_datapath = StringProperty(
+        name="tcb Data",
+        description="Path to the TCB simulation data to render.",
+        subtype="FILE_PATH",
+        default='')
+
+    tcb_density_threshold = FloatProperty(
+        name="Density Threshold",
+        description="Threshold of density that is to be considered solid.",
+        min=0, default=0)
+
+    tcb_frame = IntProperty(
         name="Frame",
         description="Frame of the simulation to read data from.",
         min=0, default=0)
@@ -2093,16 +2108,10 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         size=3,
         default=[1.0, 1.0, 1.0])
 
-    path_openvdb_datapath = StringProperty(
-        name="OpenVDB Data",
-        description="Path to the OpenVDB simulation data to render.",
-        subtype="FILE_PATH",
-        default='')
-
-    openvdb_fieldname = StringProperty(
-        name="OpenVDB Field",
-        description="Field which holds levelset data from the OpenVDB file.",
-        default='density')
+    
+    openvdb_channels = CollectionProperty(
+        type=OpenVDBChannel, name="OpenVDB Channels")
+    openvdb_channel_index = IntProperty(min=-1, default=-1)
 
     archive_anim_settings = PointerProperty(
         type=RendermanAnimSequenceSettings,

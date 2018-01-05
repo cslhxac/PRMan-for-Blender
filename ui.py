@@ -1122,19 +1122,7 @@ class OBJECT_PT_renderman_object_geometry(Panel, CollectionPanel):
             self._draw_collection(context, layout, rm, "",
                                   "collection.add_remove", "object.renderman",
                                   "openvdb_channels", "openvdb_channel_index")
-
-        if rm.geometry_source in ('DELAYED_LOAD_ARCHIVE',
-                                  'PROCEDURAL_RUN_PROGRAM',
-                                  'DYNAMIC_LOAD_DSO',
-                                  'SMOKE_VOLUME'):
-            col.prop(rm, "procedural_bounds")
-
-            if rm.procedural_bounds == 'MANUAL':
-                colf = layout.column_flow()
-                colf.prop(rm, "procedural_bounds_min")
-                colf.prop(rm, "procedural_bounds_max")
-
-        if rm.geometry_source in ('LEVELSET','SMOKE_VOLUME'):
+        elif rm.geometry_source in ('LEVELSET','SMOKE_VOLUME'):
             col.prop(rm,"levelset_data")
             col.prop(rm,"path_plugin")
 
@@ -1148,13 +1136,21 @@ class OBJECT_PT_renderman_object_geometry(Panel, CollectionPanel):
                 col.prop(rm,"cleanup_levelset_distance")
                 col.prop(rm,"cleanup_levelset")
 
-            if rm.levelset_data == 'OPENVDB':
-                col.prop(rm,"path_openvdb_datapath")
-                col.prop(rm,"openvdb_fieldname")
-                col.prop(rm,"levelset_frame")
+            if rm.levelset_data == 'TCB':
+                col.prop(rm,"path_tcb_datapath")
+                col.prop(rm,"tcb_density_threshold")
+                col.prop(rm,"tcb_frame")
 
-        if rm.geometry_source == "SMOKE_VOLUME":
-            col.prop(rm,"smoke_volume_res");
+            
+        if rm.geometry_source in ('DELAYED_LOAD_ARCHIVE',
+                                  'PROCEDURAL_RUN_PROGRAM',
+                                  'DYNAMIC_LOAD_DSO'):
+            col.prop(rm, "procedural_bounds")
+
+            if rm.procedural_bounds == 'MANUAL':
+                colf = layout.column_flow()
+                colf.prop(rm, "procedural_bounds_min")
+                colf.prop(rm, "procedural_bounds_max")
 
         if rm.geometry_source == 'BLENDER_SCENE_DATA':
             col.prop(rm, "primitive")
