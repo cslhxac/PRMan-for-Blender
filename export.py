@@ -2563,7 +2563,6 @@ def export_mesh_archive(ri, scene, data_block):
     else:
         export_geometry_data(ri, scene, ob)
 
-<<<<<<< HEAD
 def export_levelset_archive(ri, scene, data_block):
     ob = data_block.data
     # This is very simple for now, as we don't support motion data yet...
@@ -2573,11 +2572,6 @@ def export_smoke_volume_archive(ri, scene, data_block):
     ob = data_block.data
     # This is very simple for now, as we don't support motion data yet...
     export_smoke_volume(ri, scene, ob)
-
-=======
-    data_block.motion_data = None
->>>>>>> 2b5f04d3ac4e60dd1091735472d2cbacdb8e7472
-
 
 # export the archives for an mesh. If this is a
 # deforming mesh the particle export will handle it
