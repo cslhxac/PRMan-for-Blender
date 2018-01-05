@@ -2057,8 +2057,8 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         min=0, default=0)
 
     path_tcb_datapath = StringProperty(
-        name="tcb Data",
-        description="Path to the TCB simulation data to render.",
+        name="tcb Data Folder",
+        description="Path to the folder of the TCB simulation data to render.",
         subtype="FILE_PATH",
         default='')
 
