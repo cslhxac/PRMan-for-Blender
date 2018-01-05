@@ -1,6 +1,6 @@
 # ##### BEGIN MIT LICENSE BLOCK #####
 #
-# Copyright (c) 2015 Brian Savery
+# Copyright (c) 2015 - 2017 Pixar
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -99,7 +99,7 @@ class Renderman_start_it(bpy.types.Operator):
 class Renderman_open_last_RIB(bpy.types.Operator):
     bl_idname = 'rman.open_rib'
     bl_label = "Open Last RIB Scene file."
-    bl_description = "Opens the last generated Scene.rib file in the system default text editor."
+    bl_description = "Opens the last generated Scene.rib file in the system default text editor"
 
     def invoke(self, context, event=None):
         rm = context.scene.renderman
@@ -134,8 +134,8 @@ class SHADING_OT_convert_all_renderman_nodetree(bpy.types.Operator):
 
     ''''''
     bl_idname = "shading.convert_cycles_stuff"
-    bl_label = "Convert All Cycles to Renderman"
-    bl_description = "Convert all nodetrees to renderman"
+    bl_label = "Convert All Cycles to RenderMan"
+    bl_description = "Convert all nodetrees to RenderMan"
 
     def execute(self, context):
         for mat in bpy.data.materials:
@@ -194,17 +194,21 @@ class SHADING_OT_add_renderman_nodetree(bpy.types.Operator):
 
     ''''''
     bl_idname = "shading.add_renderman_nodetree"
-    bl_label = "Add Renderman Nodetree"
-    bl_description = "Add a renderman shader node tree linked to this material"
+    bl_label = "Add RenderMan Nodetree"
+    bl_description = "Add a RenderMan shader node tree linked to this material"
 
     idtype = StringProperty(name="ID Type", default="material")
     bxdf_name = StringProperty(name="Bxdf Name", default="PxrSurface")
 
     def execute(self, context):
         idtype = self.properties.idtype
-        context_data = {'material': context.material,
-                        'lamp': context.lamp, 'world': context.scene.world}
-        idblock = context_data[idtype]
+        if idtype == 'node_editor':
+            idblock = context.space_data.id
+            idtype = 'material'
+        else:
+            context_data = {'material': context.material,
+                            'lamp': context.lamp, 'world': context.scene.world}
+            idblock = context_data[idtype]
 
         # nt = bpy.data.node_groups.new(idblock.name,
         #                              type='RendermanPatternGraph')
@@ -276,7 +280,53 @@ class refresh_osl_shader(bpy.types.Operator):
     def invoke(self, context, event):
         context.node.RefreshNodes(context)
         return {'FINISHED'}
+        
+class RendermanBake(bpy.types.Operator):
+    bl_idname = "renderman.bake"
+    bl_label = "Baking"
+    bl_description = "Bake pattern nodes to texture"
+    rpass = None
+    is_running = False
+    
+    def gen_rib_frame(self, rpass):
+        try:
+            rpass.gen_rib(convert_textures=False)
+        except Exception as err:
+            self.report({'ERROR'}, 'Rib gen error: ' + traceback.format_exc())
+            
+    def execute(self, context):
+        if engine.ipr:
+            self.report(
+                {"ERROR"}, 'Please stop IPR before baking')
+            return {'FINISHED'}
+        scene = context.scene
+        rpass = RPass(scene, external_render=True, bake=True)
+        rm = scene.renderman
+        rpass.display_driver = scene.renderman.display_driver
+        if not os.path.exists(rpass.paths['texture_output']):
+            os.mkdir(rpass.paths['texture_output'])
+        self.report(
+                    {'INFO'}, 'RenderMan External Rendering generating rib for frame %d' % scene.frame_current)
+        self.gen_rib_frame(rpass)
+        rib_names = rpass.paths['rib_output']
+        frame_tex_cmds = {scene.frame_current: get_texture_list(scene)}
+        rm_version = rm.path_rmantree.split('-')[-1]
+        rm_version = rm_version.strip('/\\')
+        frame_begin = scene.frame_current
+        frame_end = scene.frame_current
+        to_render=True
+        denoise_files = []
+        denoise_aov_files = []
+        job_tex_cmds = []
+        denoise = False
+        alf_file = spool_render(str(rm_version), to_render, [rib_names], denoise_files, denoise_aov_files, frame_begin, frame_end, denoise, context, job_texture_cmds=job_tex_cmds, frame_texture_cmds=frame_tex_cmds, rpass=rpass, bake=True)
+        exe = find_tractor_spool() if rm.queuing_system == 'tractor' else find_local_queue()
+        self.report(
+                    {'INFO'}, 'RenderMan Baking spooling to %s.' % rm.queuing_system)
+        subprocess.Popen([exe, alf_file])
 
+        rpass = None
+        return {'FINISHED'}
 
 class ExternalRender(bpy.types.Operator):
 
@@ -287,11 +337,38 @@ class ExternalRender(bpy.types.Operator):
     rpass = None
     is_running = False
 
-    def gen_rib_frame(self, rpass):
+    def gen_rib_frame(self, rpass, do_objects):
         try:
-            rpass.gen_rib(convert_textures=False)
+            rpass.gen_rib(do_objects, convert_textures=False)
         except Exception as err:
             self.report({'ERROR'}, 'Rib gen error: ' + traceback.format_exc())
+
+    def gen_denoise_aov_name(self, scene, rpass):
+        addon_prefs = get_addon_prefs()
+        files = []
+        rm = scene.renderman
+        for layer in scene.render.layers:
+            # custom aovs
+            rm_rl = None
+            for render_layer_settings in rm.render_layers:
+                if layer.name == render_layer_settings.render_layer:
+                    rm_rl = render_layer_settings
+            if rm_rl:
+                layer_name = layer.name.replace(' ', '')
+                if rm_rl.denoise_aov:
+                    if rm_rl.export_multilayer:
+                        dspy_name = user_path(
+                            addon_prefs.path_aov_image, scene=scene, display_driver=rpass.display_driver,
+                            layer_name=layer_name, pass_name='multilayer')
+                        files.append(dspy_name)
+                    else:
+                        for aov in rm_rl.custom_aovs:
+                            aov_name = aov.name.replace(' ', '')
+                            dspy_name = user_path(
+                                addon_prefs.path_aov_image, scene=scene, display_driver=rpass.display_driver,
+                                layer_name=layer_name, pass_name=aov_name)
+                            files.append(dspy_name)
+        return files
 
     def execute(self, context):
         if engine.ipr:
@@ -301,12 +378,12 @@ class ExternalRender(bpy.types.Operator):
         scene = context.scene
         rpass = RPass(scene, external_render=True)
         rm = scene.renderman
-
         render_output = rpass.paths['render_output']
         images_dir = os.path.split(render_output)[0]
         aov_output = rpass.paths['aov_output']
         aov_dir = os.path.split(aov_output)[0]
-
+        do_rib = rm.generate_rib
+        do_objects = rm.generate_object_rib
         if not os.path.exists(images_dir):
             os.makedirs(images_dir)
         if not os.path.exists(aov_dir):
@@ -323,52 +400,62 @@ class ExternalRender(bpy.types.Operator):
         frame_tex_cmds = {}
         if rm.external_animation:
             rpass.update_frame_num(scene.frame_end + 1)
-            tmp_tex_cmds = get_texture_list(rpass.scene)
             rpass.update_frame_num(scene.frame_start)
-            tmp2_cmds = get_texture_list(rpass.scene)
-            job_tex_cmds = [cmd for cmd in tmp_tex_cmds if cmd in tmp2_cmds]
+            if rm.convert_textures:
+                tmp_tex_cmds = get_texture_list(rpass.scene)
+                tmp2_cmds = get_texture_list(rpass.scene)
+                job_tex_cmds = [
+                    cmd for cmd in tmp_tex_cmds if cmd in tmp2_cmds]
 
             for frame in range(scene.frame_start, scene.frame_end + 1):
                 rpass.update_frame_num(frame)
-                self.report(
-                    {'INFO'}, 'RenderMan External Rendering generating rib for frame %d' % frame)
-                self.gen_rib_frame(rpass)
+                if do_rib:
+                    self.report(
+                        {'INFO'}, 'RenderMan External Rendering generating rib for frame %d' % scene.frame_current)
+                    self.gen_rib_frame(rpass, do_objects)
                 rib_names.append(rpass.paths['rib_output'])
-                frame_tex_cmds[frame] = [cmd for cmd in get_texture_list(
-                    rpass.scene) if cmd not in job_tex_cmds]
+                if rm.convert_textures:
+                    frame_tex_cmds[frame] = [cmd for cmd in get_texture_list(
+                        rpass.scene) if cmd not in job_tex_cmds]
                 if rm.external_denoise:
                     denoise_files.append(rpass.get_denoise_names())
-                    if rpass.aov_denoise_files:
-                        denoise_aov_files.append(rpass.aov_denoise_files)
+                    if rm.spool_denoise_aov:
+                        denoise_aov_files.append(
+                            self.gen_denoise_aov_name(scene, rpass))
 
         else:
-            self.report(
-                {'INFO'}, 'RenderMan External Rendering generating rib for frame %d' % scene.frame_current)
-            self.gen_rib_frame(rpass)
+            if do_rib:
+                self.report(
+                    {'INFO'}, 'RenderMan External Rendering generating rib for frame %d' % scene.frame_current)
+                self.gen_rib_frame(rpass, do_objects)
             rib_names.append(rpass.paths['rib_output'])
-            frame_tex_cmds = {scene.frame_current: get_texture_list(scene)}
+            if rm.convert_textures:
+                frame_tex_cmds = {scene.frame_current: get_texture_list(scene)}
             if rm.external_denoise:
                 denoise_files.append(rpass.get_denoise_names())
-                if rpass.aov_denoise_files:
-                    denoise_aov_files.append(rpass.aov_denoise_files)
+                if rm.spool_denoise_aov:
+                    denoise_aov_files.append(
+                        self.gen_denoise_aov_name(scene, rpass))
 
         # gen spool job
-        denoise = rm.external_denoise
-        rm_version = rm.path_rmantree.split('-')[-1]
-        rm_version = rm_version.strip('/\\')
-        if denoise:
-            denoise = 'crossframe' if rm.crossframe_denoise and scene.frame_start != scene.frame_end and rm.external_animation else 'frame'
-        frame_begin = scene.frame_start if rm.external_animation else scene.frame_current
-        frame_end = scene.frame_end if rm.external_animation else scene.frame_current
-        alf_file = spool_render(
-            str(rm_version), rib_names, denoise_files, denoise_aov_files, frame_begin, frame_end=frame_end, denoise=denoise, context=context, job_texture_cmds=job_tex_cmds, frame_texture_cmds=frame_tex_cmds, rpass=rpass)
+        if rm.generate_alf:
+            denoise = rm.external_denoise
+            to_render = rm.generate_render
+            rm_version = rm.path_rmantree.split('-')[-1]
+            rm_version = rm_version.strip('/\\')
+            if denoise:
+                denoise = 'crossframe' if rm.crossframe_denoise and scene.frame_start != scene.frame_end and rm.external_animation else 'frame'
+            frame_begin = scene.frame_start if rm.external_animation else scene.frame_current
+            frame_end = scene.frame_end if rm.external_animation else scene.frame_current
+            alf_file = spool_render(
+                str(rm_version), to_render, rib_names, denoise_files, denoise_aov_files, frame_begin, frame_end, denoise, context, job_texture_cmds=job_tex_cmds, frame_texture_cmds=frame_tex_cmds, rpass=rpass)
 
-        # if spooling send job to queuing
-        if rm.external_action == 'spool':
-            exe = find_tractor_spool() if rm.queuing_system == 'tractor' else find_local_queue()
-            self.report(
-                {'INFO'}, 'RenderMan External Rendering spooling to %s.' % rm.queuing_system)
-            subprocess.Popen([exe, alf_file])
+            # if spooling send job to queuing
+            if rm.do_render:
+                exe = find_tractor_spool() if rm.queuing_system == 'tractor' else find_local_queue()
+                self.report(
+                    {'INFO'}, 'RenderMan External Rendering spooling to %s.' % rm.queuing_system)
+                subprocess.Popen([exe, alf_file])
 
         rpass = None
         return {'FINISHED'}
@@ -387,7 +474,7 @@ class StartInteractive(bpy.types.Operator):
         w = context.region.width
         h = context.region.height
 
-        # Draw text area that PRMan is running.
+        # Draw text area that RenderMan is running.
         pos_x = w / 2 - 100
         pos_y = 20
         blf.enable(0, blf.SHADOW)
@@ -396,7 +483,7 @@ class StartInteractive(bpy.types.Operator):
         blf.size(0, 32, 36)
         blf.position(0, pos_x, pos_y, 0)
         bgl.glColor4f(1.0, 0.0, 0.0, 1.0)
-        blf.draw(0, "%s" % ('PRMan Interactive Mode Running'))
+        blf.draw(0, "%s" % ('RenderMan Interactive Mode Running'))
         blf.disable(0, blf.SHADOW)
 
     def invoke(self, context, event=None):
@@ -434,7 +521,7 @@ class StartInteractive(bpy.types.Operator):
 class ExportRIBObject(bpy.types.Operator):
     bl_idname = "export.export_rib_archive"
     bl_label = "Export Object as RIB Archive."
-    bl_description = "Export single object as a RIB archive for use in other blend files or for other uses."
+    bl_description = "Export single object as a RIB archive for use in other blend files or for other uses"
 
     export_mat = BoolProperty(
         name="Export Material",
@@ -526,9 +613,9 @@ def quickAddPresets(presetList, pathFromPresetDir, name):
 
 
 class AddPresetRendermanRender(AddPresetBase, bpy.types.Operator):
-    '''Add or remove a Renderman Sampling Preset'''
+    '''Add or remove a RenderMan Sampling Preset'''
     bl_idname = "render.renderman_preset_add"
-    bl_label = "Add Renderman Preset"
+    bl_label = "Add RenderMan Preset"
     bl_options = {'REGISTER', 'UNDO'}
     preset_menu = "presets"
     preset_defines = ["scene = bpy.context.scene", ]
@@ -614,7 +701,7 @@ class RendermanRenderPresets():
 
 
 class PresetsMenu(bpy.types.Menu):
-    bl_label = "Renderman Presets"
+    bl_label = "RenderMan Presets"
     bl_idname = "presets"
     preset_subdir = os.path.join("renderman", "render")
     preset_operator = "script.execute_preset"
@@ -630,7 +717,7 @@ blenderAddonPaths = addon_utils.paths()
 rendermanExampleFilesList = []
 names = []
 for path in blenderAddonPaths:
-    basePath = os.path.join(path, "PRMan-for-Blender", "examples")
+    basePath = os.path.join(path, "RenderManForBlender", "examples")
     exists = os.path.exists(basePath)
     if exists:
         names = get_Files_in_Directory(basePath)
@@ -649,7 +736,7 @@ for name in names:
         def loadFile(self, context, exampleName):
             blenderAddonPaths = addon_utils.paths()
             for path in blenderAddonPaths:
-                basePath = os.path.join(path, "PRMan-for-Blender", "examples")
+                basePath = os.path.join(path, "RenderManForBlender", "examples")
                 exists = os.path.exists(basePath)
                 if exists:
                     examplePath = os.path.join(
@@ -663,7 +750,7 @@ for name in names:
 
 
 class LoadSceneMenu(bpy.types.Menu):
-    bl_label = "RendermanExamples"
+    bl_label = "RenderMan Examples"
     bl_idname = "examples"
 
     def get_operator_failsafe(self, idname):
@@ -821,7 +908,7 @@ class OT_add_renderman_aovs(bpy.types.Operator):
         for aov_type, attr, name in aovs:
             if attr:
                 aov_setting = rm_rl.custom_aovs.add()
-                aov_setting.channel_id = aov_type
+                aov_setting.aov_name = aov_type
                 aov_setting.name = name
                 aov_setting.channel_name = name
 
@@ -947,7 +1034,7 @@ class Add_Subdiv_Sheme(bpy.types.Operator):
 
 class RM_Add_Area(bpy.types.Operator):
     bl_idname = "object.mr_add_area"
-    bl_label = "Add Renderman Area"
+    bl_label = "Add RenderMan Area"
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
 
@@ -961,7 +1048,7 @@ class RM_Add_Area(bpy.types.Operator):
 
 class RM_Add_LightFilter(bpy.types.Operator):
     bl_idname = "object.mr_add_light_filter"
-    bl_label = "Add Renderman Light Filter"
+    bl_label = "Add RenderMan Light Filter"
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
 
@@ -977,7 +1064,7 @@ class RM_Add_LightFilter(bpy.types.Operator):
 
 class RM_Add_Hemi(bpy.types.Operator):
     bl_idname = "object.mr_add_hemi"
-    bl_label = "Add Renderman Hemi"
+    bl_label = "Add RenderMan Hemi"
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
 
@@ -991,7 +1078,7 @@ class RM_Add_Hemi(bpy.types.Operator):
 
 class RM_Add_Sky(bpy.types.Operator):
     bl_idname = "object.mr_add_sky"
-    bl_label = "Add Renderman Sky"
+    bl_label = "Add RenderMan Sky"
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
 
@@ -1011,22 +1098,58 @@ class Add_bxdf(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def get_type_items(self, context):
-        items = []
+        items = [
+            ("PxrSurface", "PxrSurface",
+             'PxrSurface Uber shader. For most hard surfaces'),
+            ("PxrLayerSurface", "PxrLayerSurface",
+             "PxrLayerSurface, creates a surface with two Layers"),
+            ("PxrMarschnerHair", "PxrMarschnerHair", "Hair Shader"),
+            ("PxrDisney", "PxrDisney",
+             "Disney Bxdf, a simple uber shader with no layering"),
+            ("PxrVolume", "PxrVolume", "Volume Shader")
+        ]
         # for nodetype in RendermanPatternGraph.nodetypes.values():
         #    if nodetype.renderman_node_type == 'bxdf':
         #        items.append((nodetype.bl_label, nodetype.bl_label,
         #                      nodetype.bl_label))
-        items = sorted(items, key=itemgetter(1))
         return items
     bxdf_name = EnumProperty(items=get_type_items, name="Bxdf Name")
 
     def execute(self, context):
-        selection = bpy.context.selected_objects
+        selection = bpy.context.selected_objects if hasattr(
+            bpy.context, 'selected_objects') else []
+        #selection = bpy.context.selected_objects
         bxdf_name = self.properties.bxdf_name
         mat = bpy.data.materials.new(bxdf_name)
 
-        bpy.ops.shading.add_renderman_nodetree(
-            {'lamp': None, 'material': mat}, idtype='material', bxdf_name=bxdf_name)
+        mat.use_nodes = True
+        nt = mat.node_tree
+
+        output = nt.nodes.new('RendermanOutputNode')
+        default = nt.nodes.new('%sBxdfNode' % bxdf_name)
+        default.location = output.location
+        default.location[0] -= 300
+        nt.links.new(default.outputs[0], output.inputs[0])
+
+        if bxdf_name == 'PxrLayerSurface':
+            mixer = nt.nodes.new("PxrLayerMixerPatternNode")
+            layer1 = nt.nodes.new("PxrLayerPatternNode")
+            layer2 = nt.nodes.new("PxrLayerPatternNode")
+
+            mixer.location = default.location
+            mixer.location[0] -= 300
+
+            layer1.location = mixer.location
+            layer1.location[0] -= 300
+            layer1.location[1] += 300
+
+            layer2.location = mixer.location
+            layer2.location[0] -= 300
+            layer2.location[1] -= 300
+
+            nt.links.new(mixer.outputs[0], default.inputs[0])
+            nt.links.new(layer1.outputs[0], mixer.inputs['baselayer'])
+            nt.links.new(layer2.outputs[0], mixer.inputs['layer1'])
 
         for obj in selection:
             if(obj.type not in EXCLUDED_OBJECT_TYPES):
@@ -1037,30 +1160,44 @@ class Add_bxdf(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class New_bxdf(bpy.types.Operator):
+    bl_idname = "nodes.new_bxdf"
+    bl_label = "New RenderMan Material"
+    bl_description = ""
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        ob = context.object
+        bxdf_name = 'PxrSurface'
+        mat = bpy.data.materials.new(bxdf_name)
+        ob.active_material = mat
+        mat.use_nodes = True
+        nt = mat.node_tree
+
+        output = nt.nodes.new('RendermanOutputNode')
+        default = nt.nodes.new('PxrSurfaceBxdfNode')
+        default.location = output.location
+        default.location[0] -= 300
+        nt.links.new(default.outputs[0], output.inputs[0])
+
+        return {"FINISHED"}
+
+
 class add_GeoLight(bpy.types.Operator):
     bl_idname = "object.addgeoarealight"
     bl_label = "Add GeoAreaLight"
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
 
-    bxdf_name = StringProperty(name="Bxdf Name", default="PxrDisney")
-
     def execute(self, context):
         selection = bpy.context.selected_objects
-        bxdf_name = self.properties.bxdf_name
-        mat = bpy.data.materials.new(bxdf_name)
+        mat = bpy.data.materials.new("PxrMeshLight")
 
-        bpy.ops.shading.add_renderman_nodetree(
-            {'lamp': None, 'material': mat}, idtype='material')
+        mat.use_nodes = True
+        nt = mat.node_tree
 
-        matName = mat.name
-        nt = bpy.data.node_groups[matName]
-        output = None
-        for node in nt.nodes:
-            if(node.name == "Output"):
-                output = node
-        geoLight = nt.nodes.new('PxrRectLightLightNode')
-        geoLight["exposure"] = 5.0
+        output = nt.nodes.new('RendermanOutputNode')
+        geoLight = nt.nodes.new('PxrMeshLightLightNode')
         geoLight.location[0] -= 300
         geoLight.location[1] -= 420
         if(output is not None):
@@ -1267,7 +1404,7 @@ class AddCamera(bpy.types.Operator):
 class RM_restart_addon(bpy.types.Operator):
     bl_idname = "renderman.restartaddon"
     bl_label = "Restart Addon"
-    bl_description = "Restarts the RenderMan for Blender addon."
+    bl_description = "Restarts the RenderMan for Blender addon"
 
     def execute(self, context):
         bpy.ops.script.reload()

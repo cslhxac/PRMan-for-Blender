@@ -1,6 +1,6 @@
 # ##### BEGIN MIT LICENSE BLOCK #####
 #
-# Copyright (c) 2011 Matt Ebb
+# Copyright (c) 2015 - 2017 Pixar
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,11 @@ import sys
 
 bl_info = {
     "name": "RenderMan For Blender",
-    "author": "Brian Savery",
-    "version": (21, 2, 0),
-    "blender": (2, 77, 0),
+    "author": "Pixar",
+    "version": (21, 5, 0),
+    "blender": (2, 78, 0),
     "location": "Info Header, render engine menu",
-    "description": "RenderMan 21.2 integration",
+    "description": "RenderMan 21.5 integration",
     "warning": "",
     "category": "Render"}
 
@@ -71,17 +71,17 @@ class PRManRender(bpy.types.RenderEngine):
         if self.render_pass is not None:
             engine.render(self)
 
-
+# these handlers are for marking files as dirty for ribgen
 def add_handlers(scene):
-    if engine.update_timestamp not in bpy.app.handlers.scene_update_pre:
-        bpy.app.handlers.scene_update_pre.append(engine.update_timestamp)
+    if engine.update_timestamp not in bpy.app.handlers.scene_update_post:
+        bpy.app.handlers.scene_update_post.append(engine.update_timestamp)
     if properties.initial_groups not in bpy.app.handlers.scene_update_post:
         bpy.app.handlers.load_post.append(properties.initial_groups)
 
 
 def remove_handlers():
-    if properties.initial_groups in bpy.app.handlers.scene_update_pre:
-        bpy.app.handlers.scene_update_pre.remove(properties.initial_groups)
+    if properties.initial_groups in bpy.app.handlers.scene_update_post:
+        bpy.app.handlers.scene_update_post.remove(properties.initial_groups)
     if engine.update_timestamp in bpy.app.handlers.scene_update_post:
         bpy.app.handlers.scene_update_post.remove(engine.update_timestamp)
 
@@ -117,16 +117,20 @@ def register():
     from . import preferences
     preferences.register()
     load_addon()
+    from . import presets
+    presets.register()
     bpy.utils.register_module(__name__)
+
 
 
 def unregister():
     from . import preferences
     remove_handlers()
-
     properties.unregister()
     operators.unregister()
     ui.unregister()
     nodes.unregister()
     preferences.unregister()
+    from . import presets
+    presets.unregister()
     bpy.utils.unregister_module(__name__)

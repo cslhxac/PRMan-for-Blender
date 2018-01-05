@@ -1,6 +1,6 @@
 # ##### BEGIN MIT LICENSE BLOCK #####
 #
-# Copyright (c) 2015 Brian Savery
+# Copyright (c) 2015 - 2017 Pixar
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ from bpy.props import IntProperty, PointerProperty, EnumProperty
 from .util import get_installed_rendermans,\
     rmantree_from_env, guess_rmantree
 
+from .presets.properties import RendermanPresetGroup
 
 class RendermanPreferencePath(bpy.types.PropertyGroup):
     name = StringProperty(name="", subtype='DIR_PATH')
@@ -103,19 +104,19 @@ class RendermanPreferences(AddonPreferences):
     archive_paths_index = IntProperty(min=-1, default=-1)
 
     use_default_paths = BoolProperty(
-        name="Use PRMan default paths",
+        name="Use RenderMan default paths",
         description="Includes paths for default shaders etc. from RenderMan Pro\
             Server install",
         default=True)
     use_builtin_paths = BoolProperty(
         name="Use built in paths",
-        description="Includes paths for default shaders etc. from PRMan\
+        description="Includes paths for default shaders etc. from RenderMan\
             exporter",
         default=False)
 
     rmantree_choice = EnumProperty(
         name='RenderMan Version to use',
-        description='Leaving as "Newest" will automatically update when you install a new RenderMan version.',
+        description='Leaving as "Newest" will automatically update when you install a new RenderMan version',
         # default='NEWEST',
         items=find_installed_rendermans
     )
@@ -159,26 +160,45 @@ class RendermanPreferences(AddonPreferences):
         description="Draw notice on View3D when IPR is active",
         default=True)
 
+    draw_panel_icon = BoolProperty(
+        name="Draw Panel Icon",
+        description="Draw an icon on RenderMan Panels",
+        default=True)
+
     path_display_driver_image = StringProperty(
         name="Main Image path",
-        description="Path for the rendered main image.",
+        description="Path for the rendered main image",
         subtype='FILE_PATH',
         default=os.path.join('$OUT', 'images', '{scene}.####.{file_type}'))
 
     path_aov_image = StringProperty(
         name="AOV Image path",
-        description="Path for the rendered aov images.",
+        description="Path for the rendered aov images",
         subtype='FILE_PATH',
         default=os.path.join('$OUT', 'images', '{scene}.{layer}.{pass}.####.{file_type}'))
-
-    draw_ipr_text = BoolProperty(
-        name="Draw IPR Text",
-        description="Draw notice on View3D when IPR is active",
-        default=True)
 
     env_vars = PointerProperty(
         type=RendermanEnvVarSettings,
         name="Environment Variable Settings")
+
+    auto_check_update = bpy.props.BoolProperty(
+        name = "Auto-check for Update",
+        description = "If enabled, auto-check for updates using an interval",
+        default = True,
+        )
+
+    presets_library = PointerProperty(
+        type=RendermanPresetGroup,
+    )
+
+    # both these paths are absolute
+    active_presets_path = StringProperty(default = '')
+    presets_path = StringProperty(
+        name="Path for preset Library",
+        description="Path for preset files, if not present these will be copied from RMANTREE.\n  Set this if you want to pull in an external library.",
+        subtype='FILE_PATH',
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'presets', 'RenderManAssetLibrary'))
+
 
     def draw(self, context):
         layout = self.layout
@@ -199,6 +219,8 @@ class RendermanPreferences(AddonPreferences):
         layout.prop(self, 'path_display_driver_image')
         layout.prop(self, 'path_aov_image')
         layout.prop(self, 'draw_ipr_text')
+        layout.prop(self, 'draw_panel_icon')
+        layout.prop(self.presets_library, 'path')
         #layout.prop(env, "shd")
         #layout.prop(env, "ptc")
         #layout.prop(env, "arc")
@@ -206,6 +228,8 @@ class RendermanPreferences(AddonPreferences):
 
 def register():
     try:
+        from .presets import properties
+        properties.register()
         bpy.utils.register_class(RendermanPreferencePath)
         bpy.utils.register_class(RendermanEnvVarSettings)
         bpy.utils.register_class(RendermanPreferences)

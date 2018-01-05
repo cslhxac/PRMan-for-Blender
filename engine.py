@@ -1,6 +1,6 @@
 # ##### BEGIN MIT LICENSE BLOCK #####
 #
-# Copyright (c) 2015 Brian Savery
+# Copyright (c) 2015 - 2017 Pixar
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -59,7 +59,7 @@ from bpy.app.handlers import persistent
 from .export import write_rib, write_preview_rib, get_texture_list,\
     issue_shader_edits, get_texture_list_preview, issue_transform_edits,\
     interactive_initial_rib, update_light_link, delete_light,\
-    reset_light_illum, solo_light, mute_lights, issue_light_vis
+    reset_light_illum, solo_light, mute_lights, issue_light_vis, update_crop_window
 
 from .nodes import get_tex_file_name
 
@@ -127,7 +127,7 @@ def reset(engine, data, scene):
         prman.Cleanup()
     engine.render_pass.ri = prman.Ri()
     engine.render_pass.set_scene(scene)
-
+    engine.render_pass.update_frame_num(scene.frame_current)
 
 def update(engine, data, scene):
     engine.render_pass.update_time = int(time.time())
@@ -160,7 +160,7 @@ def update_interactive(engine, context):
 @persistent
 def update_timestamp(scene):
     active = scene.objects.active
-    if active and active.is_updated_data:
+    if active and (active.is_updated_data or (active.data and active.data.is_updated)):
         # mark object for update
         now = int(time.time())
         active.renderman.update_timestamp = now
@@ -176,11 +176,10 @@ def format_seconds_to_hhmmss(seconds):
 
 class RPass:
 
-    def __init__(self, scene, interactive=False, external_render=False, preview_render=False):
+    def __init__(self, scene, interactive=False, external_render=False, preview_render=False, bake=False):
         self.rib_done = False
         self.scene = scene
         self.output_files = []
-        self.aov_denoise_files = []
         # set the display driver
         if external_render:
             self.display_driver = scene.renderman.display_driver
@@ -195,6 +194,7 @@ class RPass:
         self.initialize_paths(scene)
         self.rm = scene.renderman
         self.external_render = external_render
+        self.bake=bake
         self.do_render = (scene.renderman.output_action == 'EXPORT_RENDER')
         self.is_interactive = interactive
         self.is_interactive_ready = False
@@ -210,6 +210,7 @@ class RPass:
         self.ri = prman.Ri()
         self.edit_num = 0
         self.update_time = None
+        self.last_edit_mat = None
 
     def __del__(self):
 
@@ -322,7 +323,7 @@ class RPass:
             update_image()
         except:
             engine.report({"ERROR"},
-                          "Problem launching PRMan from %s." % prman_executable)
+                          "Problem launching RenderMan from %s." % prman_executable)
             isProblem = True
 
     def get_denoise_names(self):
@@ -375,7 +376,8 @@ class RPass:
             engine.end_result(result)
 
         # create command and start process
-        options = self.options + ['-Progress'] + ['-cwd', cdir]
+        options = self.options + ['-Progress'] + ['-cwd', cdir] + \
+            ['-woff', 'N02003']
         prman_executable = 'prman'
         if self.display_driver in ['openexr', 'tiff']:
             options = options + ['-checkpoint',
@@ -395,7 +397,7 @@ class RPass:
             isProblem = False
         except:
             engine.report({"ERROR"},
-                          "Problem launching PRMan from %s." % prman_executable)
+                          "Problem launching RenderMan from %s." % prman_executable)
             isProblem = True
 
         if not isProblem:
@@ -404,7 +406,7 @@ class RPass:
             s = '.'
             while not os.path.exists(render_output) and \
                     self.display_driver not in ['it']:
-                engine.update_stats("", ("PRMan: Starting Rendering" + s))
+                engine.update_stats("", ("RenderMan: Starting Rendering" + s))
                 if engine.test_break():
                     try:
                         process.kill()
@@ -413,7 +415,7 @@ class RPass:
                     break
 
                 if process.poll() != None:
-                    engine.report({"ERROR"}, "PRMan: Exited")
+                    engine.report({"ERROR"}, "RenderMan: Exited")
                     break
 
                 time.sleep(DELAY)
@@ -423,7 +425,7 @@ class RPass:
 
                 if self.display_driver not in ['it']:
                     prev_mod_time = os.path.getmtime(render_output)
-                engine.update_stats("", ("PRMan: Rendering."))
+                engine.update_stats("", ("RenderMan: Rendering."))
                 # Update while rendering
 
                 while True:
@@ -435,20 +437,20 @@ class RPass:
                         engine.update_progress(float(perc) / 100.0)
                     else:
                         if line and "ERROR" in str(line):
-                            engine.report({"ERROR"}, "PRMan: %s " %
+                            engine.report({"ERROR"}, "RenderMan: %s " %
                                           line.decode('utf8'))
                         elif line and "WARNING" in str(line):
-                            engine.report({"WARNING"}, "PRMan: %s " %
+                            engine.report({"WARNING"}, "RenderMan: %s " %
                                           line.decode('utf8'))
                         elif line and "SEVERE" in str(line):
-                            engine.report({"ERROR"}, "PRMan: %s " %
+                            engine.report({"ERROR"}, "RenderMan: %s " %
                                           line.decode('utf8'))
 
                     if process.poll() is not None:
                         if self.display_driver not in ['it']:
                             update_image()
                         t2 = time.time()
-                        engine.report({"INFO"}, "PRMan: Done Rendering." +
+                        engine.report({"INFO"}, "RenderMan: Done Rendering." +
                                       " (elapsed time: " +
                                       format_seconds_to_hhmmss(t2 - t1) + ")")
 
@@ -460,7 +462,7 @@ class RPass:
                             process.kill()
                             isProblem = True
                             engine.report({"INFO"},
-                                          "PRMan: Rendering Cancelled.")
+                                          "RenderMan: Rendering Cancelled.")
                         except:
                             pass
                         break
@@ -478,7 +480,7 @@ class RPass:
                       "] does not exist.")
         else:
             debug("error",
-                  "Problem launching PRMan from %s." % prman_executable)
+                  "Problem launching RenderMan from %s." % prman_executable)
 
         # launch the denoise process if turned on
         if self.rm.do_denoise and not isProblem:
@@ -494,7 +496,7 @@ class RPass:
                     cmd = [os.path.join(self.paths['rmantree'], 'bin',
                                         'denoise')] + denoise_options + [denoise_data]
 
-                    engine.update_stats("", ("PRMan: Denoising image"))
+                    engine.update_stats("", ("RenderMan: Denoising image"))
                     t1 = time.time()
                     process = subprocess.Popen(cmd, cwd=images_dir,
                                                stdout=subprocess.PIPE,
@@ -503,7 +505,7 @@ class RPass:
                     process.wait()
                     t2 = time.time()
                     if os.path.exists(filtered_name):
-                        engine.report({"INFO"}, "PRMan: Done Denoising." +
+                        engine.report({"INFO"}, "RenderMan: Done Denoising." +
                                       " (elapsed time: " +
                                       format_seconds_to_hhmmss(t2 - t1) + ")")
                         if self.display_driver != 'it':
@@ -534,7 +536,7 @@ class RPass:
                                                        env=environ)
                             process.wait()
                     else:
-                        engine.report({"ERROR"}, "PRMan: Error Denoising.")
+                        engine.report({"ERROR"}, "RenderMan: Error Denoising.")
                 except:
                     engine.report({"ERROR"},
                                   "Problem launching denoise from %s." %
@@ -545,7 +547,7 @@ class RPass:
                               denoise_data)
 
         # Load all output images into image editor
-        if self.rm.import_images and self.rm.render_into == 'blender':
+        if bpy.app.version[1] < 79 and self.rm.import_images and self.rm.render_into == 'blender':
             for image in self.output_files:
                 try:
                     bpy.ops.image.open(filepath=image)
@@ -572,7 +574,7 @@ class RPass:
     # start the interactive session.  Basically the same as ribgen, only
     # save the file
     def start_interactive(self):
-
+        rm = self.scene.renderman
         if find_it_path() is None:
             debug('error', "ERROR no 'it' installed.  \
                     Cannot start interactive rendering.")
@@ -585,13 +587,19 @@ class RPass:
             return
 
         self.ri.Begin(self.paths['rib_output'])
-        self.ri.Option("rib", {"string asciistyle": "indented,wide"})
+        rib_options = {"string format": "binary"} if rm.rib_format == "binary" else {
+            "string format": "ascii", "string asciistyle": "indented,wide"}
+        if rm.rib_compression == "gzip":
+            rib_options["string compression"] = "gzip"
+        self.ri.Option("rib", rib_options)
         self.material_dict = {}
         self.instance_dict = {}
         self.lights = {}
         self.light_filter_map = {}
         self.current_solo_light = None
         self.muted_lights = []
+        self.crop_window = (self.scene.render.border_min_x, self.scene.render.border_max_x,
+                      1.0 - self.scene.render.border_min_y, 1.0 - self.scene.render.border_max_y)
         for obj in self.scene.objects:
             if obj.type == 'LAMP' and obj.name not in self.lights:
                 # add the filters to the filter ma
@@ -626,7 +634,7 @@ class RPass:
             -dspyserver it" % self.paths['export_dir']
         else:
             filename = "launch:prman? -t:%d" % self.rm.threads + " -cwd %s -ctrl $ctrlin $ctrlout \
-            -dspyserver it" % self.paths['export_dir']
+            -dspyserver it" % self.paths['export_dir'].replace(' ', '%20')
         self.ri.Begin(filename)
         self.ri.Option("rib", {"string asciistyle": "indented,wide"})
         interactive_initial_rib(self, self.ri, self.scene, prman)
@@ -641,6 +649,13 @@ class RPass:
 
     # find the changed object and send for edits
     def issue_transform_edits(self, scene):
+        cw = (scene.render.border_min_x, scene.render.border_max_x,
+                      1.0 - scene.render.border_min_y, 1.0 - scene.render.border_max_y)
+        if cw != self.crop_window:
+            self.crop_window = cw
+            update_crop_window(self.ri, self, prman, cw)
+            return
+
         active = scene.objects.active
         if (active and active.is_updated) or (active and active.type == 'LAMP' and active.is_updated_data):
             if is_ipr_running():
@@ -649,7 +664,7 @@ class RPass:
                 return
         # record the marker to rib and flush to that point
         # also do the camera in case the camera is locked to display.
-        if scene.camera != active and scene.camera.is_updated:
+        if scene.camera.name != active.name and scene.camera.is_updated:
             if is_ipr_running():
                 issue_transform_edits(self, self.ri, scene.camera, prman)
             else:
@@ -667,6 +682,16 @@ class RPass:
 
             for light_name in lights_deleted:
                 self.lights.pop(light_name, None)
+
+        if active and active.type in ['MESH', 'CURVE', 'SURFACE', 'META', 'FONT', 'LATTICE']:
+
+            for mat_slot in active.material_slots:
+                if mat_slot.material not in self.material_dict:
+                    self.material_dict[mat_slot.material] = []
+                if active not in self.material_dict[mat_slot.material]:
+                    self.material_dict[mat_slot.material].append(active)
+                    issue_shader_edits(self, self.ri, prman,
+                                        nt=mat_slot.material.node_tree, ob=active)
 
     def update_illuminates(self):
         update_illuminates(self, self.ri, prman)
@@ -734,7 +759,8 @@ class RPass:
         self.instance_dict = {}
         pass
 
-    def gen_rib(self, engine=None, convert_textures=True):
+    def gen_rib(self, do_objects=True, engine=None, convert_textures=True):
+        rm = self.scene.renderman
         if self.scene.camera is None:
             debug('error', "ERROR no Camera.  \
                     Cannot generate rib.")
@@ -748,15 +774,19 @@ class RPass:
                           format_seconds_to_hhmmss(time.time() - time_start))
         self.scene.frame_set(self.scene.frame_current)
         time_start = time.time()
+        rib_options = {"string format": "binary"} if rm.rib_format == "binary" else {
+            "string format": "ascii", "string asciistyle": "indented,wide"}
+        if rm.rib_compression == "gzip":
+            rib_options["string compression"] = "gzip"
+        self.ri.Option("rib", rib_options)
         self.ri.Begin(self.paths['rib_output'])
-        self.ri.Option("rib", {"string asciistyle": "indented,wide"})
 
         # Check if rendering select objects only.
-        if(self.scene.renderman.render_selected_objects_only):
+        if rm.render_selected_objects_only:
             visible_objects = get_Selected_Objects(self.scene)
         else:
             visible_objects = None
-        write_rib(self, self.scene, self.ri, visible_objects, engine)
+        write_rib(self, self.scene, self.ri, visible_objects, engine, do_objects)
         self.ri.End()
         if engine:
             engine.report({"INFO"}, "RIB generation took %s" %

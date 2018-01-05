@@ -1,6 +1,6 @@
 # ##### BEGIN MIT LICENSE BLOCK #####
 #
-# Copyright (c) 2015 Brian Savery
+# Copyright (c) 2015 - 2017 Pixar
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -28,6 +28,7 @@ import subprocess
 import bpy
 import re
 import sys
+from collections import OrderedDict
 
 from .util import init_env
 from .util import get_path_list
@@ -64,7 +65,7 @@ def generate_page(sp, node, parent_name, first_level=False):
         default = parent_name == 'Diffuse'
         prop = BoolProperty(name="Enable " + parent_name,
                             default=bool(default),
-                            update=update_func)
+                            update=update_func_with_inputs)
         setattr(node, param_name, prop)
 
     for sub_param in sp.findall('param') + sp.findall('page'):
@@ -115,7 +116,7 @@ def generate_page(sp, node, parent_name, first_level=False):
 def class_generate_properties(node, parent_name, shaderparameters):
     prop_names = []
     prop_meta = {}
-    output_meta = {}
+    output_meta = OrderedDict()
 
     # pxr osl and seexpr need these to find the code
     if parent_name in ["PxrOSL", "PxrSeExpr"]:
@@ -220,7 +221,48 @@ def class_generate_properties(node, parent_name, shaderparameters):
 def update_conditional_visops(node):
     for param_name, prop_meta in getattr(node, 'prop_meta').items():
         if 'conditionalVisOp' in prop_meta:
-            prop_meta['hidden'] = not eval(prop_meta['conditionalVisOp'])
+            try:
+                hidden = not eval(prop_meta['conditionalVisOp'])
+                prop_meta['hidden'] = hidden
+                if hasattr(node, 'inputs') and param_name in node.inputs:
+                    node.inputs[param_name].hide = hidden
+            except:
+                print("Error in conditional visop")
+
+def update_func_with_inputs(self, context):
+    # check if this prop is set on an input
+    node = self.node if hasattr(self, 'node') else self
+
+    if node.renderman_node_type == 'lightfilter' and context and hasattr(context, 'lamp'):
+        context.lamp.renderman.update_filter_shape()
+
+    from . import engine
+    if engine.is_ipr_running():
+        engine.ipr.issue_shader_edits(node=node)
+
+    if context and hasattr(context, 'material'):
+        mat = context.material
+        if mat:
+            node.update_mat(mat)
+    elif context and hasattr(context, 'node'):
+        mat = context.space_data.id
+        if mat:
+            node.update_mat(mat)
+
+    # update the conditional_vis_ops
+    update_conditional_visops(node)
+
+    if node.bl_idname in ['PxrLayerPatternNode', 'PxrSurfaceBxdfNode']:
+        node_add_inputs(node, node.name, node.prop_names)
+    else:
+        update_inputs(node)
+
+    # set any inputs that are visible and param is hidden to hidden
+    prop_meta = getattr(node, 'prop_meta')
+    if hasattr(node, 'inputs'):
+        for input_name, socket in node.inputs.items():
+            if 'hidden' in prop_meta[input_name]:
+                socket.hide = prop_meta[input_name]['hidden']
 
 
 # send updates to ipr if running
@@ -239,12 +281,13 @@ def update_func(self, context):
         mat = context.material
         if mat:
             node.update_mat(mat)
+    elif context and hasattr(context, 'node'):
+        mat = context.space_data.id
+        if mat:
+            node.update_mat(mat)
 
     # update the conditional_vis_ops
     update_conditional_visops(node)
-
-    if node.bl_idname in ['PxrLayerPatternNode', 'PxrSurfaceBxdfNode']:
-        node_add_inputs(node, node.name, node.prop_names)
 
     # set any inputs that are visible and param is hidden to hidden
     prop_meta = getattr(node, 'prop_meta')
@@ -256,6 +299,8 @@ def update_func(self, context):
 
 
 def update_inputs(node):
+    if node.bl_idname == 'PxrMeshLightLightNode':
+        return
     for page_name in node.prop_names:
         if node.prop_meta[page_name]['renderman_type'] == 'page':
             for prop_name in getattr(node, page_name):
@@ -269,7 +314,7 @@ def recursive_enable_inputs(node, prop_names, enable=True):
     for prop_name in prop_names:
         if type(prop_name) == str and node.prop_meta[prop_name]['renderman_type'] == 'page':
             recursive_enable_inputs(node, getattr(node, prop_name), enable)
-        elif prop_name in node.inputs.keys():
+        elif hasattr(node, 'inputs') and prop_name in node.inputs:
             node.inputs[prop_name].hide = not enable
         else:
             continue
@@ -285,7 +330,7 @@ def parse_conditional_visop(hintdict):
         'lessThan': '<'
     }
     visop = hintdict.find("string[@name='conditionalVisOp']").attrib['value']
-    if visop == 'and':
+    if visop in ('and', 'or'):
         vis1op = hintdict.find(
             "string[@name='conditionalVis1Op']").attrib['value']
         vis1path = hintdict.find(
@@ -315,7 +360,7 @@ def parse_conditional_visop(hintdict):
             vis2 = "float(getattr(node, '%s')) %s float(%s)" % \
                 (vis2path.rsplit('/', 1)[-1], op_map[vis2op], vis2Value)
 
-        return "%s and %s" % (vis1, vis2)
+        return "%s %s %s" % (vis1, visop, vis2)
     else:
         vispath = hintdict.find(
             "string[@name='conditionalVisPath']").attrib['value']
@@ -371,7 +416,6 @@ def generate_property(sp):
         param_type = sp.attrib['type']
     tags = sp.find('tags')
 
-    param_help = ""
     param_default = sp.attrib['default'] if 'default' in sp.attrib else None
 
     prop_meta = sp.attrib
@@ -379,6 +423,12 @@ def generate_property(sp):
         param_type = 'struct'
         prop_meta['is_vstruct'] = True
     renderman_type = param_type
+
+    # correct for param_type mismatch with tag value
+    if param_type == 'vector' and tags and tags.find('tag').attrib['value'] == 'color':
+        param_type = 'color'
+
+    update_function = update_func_with_inputs if 'enable' in param_name else update_func
 
     prop = None
 
@@ -398,12 +448,23 @@ def generate_property(sp):
 
     # sigh, some visops are in attrib:
     elif 'conditionalVisOp' in sp.attrib:
-        prop_meta['conditionalVisOp'] = parse_conditional_visop_attrib(
-            sp.attrib)
+        prop_meta['conditionalVisOp'] = parse_conditional_visop_attrib(sp.attrib)
 
+    param_help = ""
     for s in sp:
         if s.tag == 'help' and s.text:
-            param_help = s.text
+            #
+            # remove leading mutlispaces (note: 'leading' require re.MULTILINE)
+            param_help = re.sub(r"^(?:\ )+", '', s.text, count=0, flags=re.M)
+
+            # remove single newline at beginning (if any) of whole xml node
+            param_help = re.sub(r'^\n', '', param_help)
+
+            # remove single newline chars (exact match), replace with a space
+            # (preserving multi newlines as formatting as paragraphs).
+            # Add a newline to the end of whole xml node to separate additional
+            # infos added by Blender itself.
+            param_help = re.sub(r"(?<!\n)\n(?!\n)", ' ', param_help, count=0, flags=re.M) + '\n'
 
     if 'float' in param_type:
         if 'arraySize' in sp.attrib.keys():
@@ -417,21 +478,21 @@ def generate_property(sp):
                                        default=param_default, precision=3,
                                        size=len(param_default),
                                        description=param_help,
-                                       update=update_func)
+                                       update=update_function)
 
         else:
             param_default = parse_float(param_default)
             if param_widget == 'checkbox' or param_widget == 'switch':
                 prop = BoolProperty(name=param_label,
                                     default=bool(param_default),
-                                    description=param_help, update=update_func)
+                                    description=param_help, update=update_function)
 
             elif param_widget == 'mapper':
                 prop = EnumProperty(name=param_label,
                                     items=sp_optionmenu_to_string(
                                         sp.find("hintdict[@name='options']")),
                                     default=sp.attrib['default'],
-                                    description=param_help, update=update_func)
+                                    description=param_help, update=update_function)
 
             else:
                 param_min = parse_float(sp.attrib['min']) if 'min' \
@@ -445,7 +506,7 @@ def generate_property(sp):
                 prop = FloatProperty(name=param_label,
                                      default=param_default, precision=3,
                                      soft_min=param_min, soft_max=param_max,
-                                     description=param_help, update=update_func)
+                                     description=param_help, update=update_function)
         renderman_type = 'float'
 
     elif param_type == 'int' or param_type == 'integer':
@@ -460,7 +521,7 @@ def generate_property(sp):
                                      default=param_default,
                                      size=len(param_default),
                                      description=param_help,
-                                     update=update_func)
+                                     update=update_function)
         else:
             param_default = int(param_default) if param_default else 0
             # make invertT default 0
@@ -470,14 +531,14 @@ def generate_property(sp):
             if param_widget == 'checkbox' or param_widget == 'switch':
                 prop = BoolProperty(name=param_label,
                                     default=bool(param_default),
-                                    description=param_help, update=update_func)
+                                    description=param_help, update=update_function)
 
             elif param_widget == 'mapper':
                 prop = EnumProperty(name=param_label,
                                     items=sp_optionmenu_to_string(
                                         sp.find("hintdict[@name='options']")),
                                     default=sp.attrib['default'],
-                                    description=param_help, update=update_func)
+                                    description=param_help, update=update_function)
             else:
                 param_min = int(sp.attrib['min']) if 'min' in sp.attrib else 0
                 param_max = int(
@@ -486,7 +547,7 @@ def generate_property(sp):
                                    default=param_default,
                                    soft_min=param_min,
                                    soft_max=param_max,
-                                   description=param_help, update=update_func)
+                                   description=param_help, update=update_function)
         renderman_type = 'int'
 
     elif param_type == 'color':
@@ -500,13 +561,13 @@ def generate_property(sp):
                                    default=param_default, size=3,
                                    subtype="COLOR",
                                    soft_min=0.0, soft_max=1.0,
-                                   description=param_help, update=update_func)
+                                   description=param_help, update=update_function)
         renderman_type = 'color'
     elif param_type == 'shader':
         param_default = ''
         prop = StringProperty(name=param_label,
                               default=param_default,
-                              description=param_help, update=update_func)
+                              description=param_help, update=update_function)
         renderman_type = 'string'
 
     elif param_type == 'string' or param_type == 'struct':
@@ -514,25 +575,25 @@ def generate_property(sp):
             param_default = ''
         # if '__' in param_name:
         #    param_name = param_name[2:]
-        if param_widget == 'fileinput' or param_widget == 'assetidinput':
+        if param_widget == 'fileinput' or param_widget == 'assetidinput' or (param_widget == 'default' and param_name == 'filename'):
             prop = StringProperty(name=param_label,
                                   default=param_default, subtype="FILE_PATH",
-                                  description=param_help, update=update_func)
+                                  description=param_help, update=update_function)
         elif param_widget == 'mapper':
             prop = EnumProperty(name=param_label,
                                 default=param_default, description=param_help,
                                 items=sp_optionmenu_to_string(
                                     sp.find("hintdict[@name='options']")),
-                                update=update_func)
+                                update=update_function)
         elif param_widget == 'popup':
             options = [(o, o, '') for o in sp.attrib['options'].split('|')]
             prop = EnumProperty(name=param_label,
                                 default=param_default, description=param_help,
-                                items=options, update=update_func)
+                                items=options, update=update_function)
         else:
             prop = StringProperty(name=param_label,
                                   default=param_default,
-                                  description=param_help, update=update_func)
+                                  description=param_help, update=update_function)
         renderman_type = param_type
 
     elif param_type == 'vector' or param_type == 'normal':
@@ -541,8 +602,8 @@ def generate_property(sp):
         param_default = [float(v) for v in param_default.split()]
         prop = FloatVectorProperty(name=param_label,
                                    default=param_default, size=3,
-                                   subtype="EULER",
-                                   description=param_help, update=update_func)
+                                   subtype="NONE",
+                                   description=param_help, update=update_function)
     elif param_type == 'point':
         if param_default is None:
             param_default = '0 0 0'
@@ -550,7 +611,7 @@ def generate_property(sp):
         prop = FloatVectorProperty(name=param_label,
                                    default=param_default, size=3,
                                    subtype="XYZ",
-                                   description=param_help, update=update_func)
+                                   description=param_help, update=update_function)
         renderman_type = param_type
     elif param_type == 'int[2]':
         param_type = 'int'
@@ -558,7 +619,7 @@ def generate_property(sp):
         is_array = 2
         prop = IntVectorProperty(name=param_label,
                                  default=param_default, size=2,
-                                 description=param_help, update=update_func)
+                                 description=param_help, update=update_function)
         renderman_type = 'int'
         prop_meta['arraySize'] = 2
 
@@ -627,6 +688,7 @@ socket_map = {
     'struct': 'RendermanNodeSocketStruct',
     'normal': 'RendermanNodeSocketVector',
     'vector': 'RendermanNodeSocketVector',
+    'point': 'RendermanNodeSocketVector',
     'void': 'RendermanNodeSocketStruct',
     'vstruct': 'RendermanNodeSocketStruct',
 }
@@ -668,10 +730,10 @@ class txmake_options():
               "exportType": "name"}
 
     sblur = {'name': "sblur", 'type': "float", 'default': 1.0, 'dispName': "Sblur",
-             'help': "Amount of X blur applied to texture.",
+             'help': "Amount of X blur applied to texture",
              'exportType': "name"}
     tblur = {'name': "tblur", 'type': "float", 'default': 1.0, 'dispName': "Tblur",
-             'help': "Amount of Y blur applied to texture.",
+             'help': "Amount of Y blur applied to texture",
              'exportType': "name"}
     pattern = {'name': "pattern", 'type': "enum", 'default': "diagonal",
                'items': [("diagonal", "Diagonal", ""), ("single", "Single", ""),
