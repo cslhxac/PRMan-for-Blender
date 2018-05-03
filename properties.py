@@ -2020,6 +2020,8 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
                 'Renders a prevously exported RIB archive'),
                ('OPENVDB', 'OpenVDB File',
                 'Renders a prevously exported OpenVDB file'),
+               ('VOLUME', 'Density Volume',
+                'Renders a density volume.'),
                ('LEVELSET', 'Level Set',
                 'Renders a level set defined by an implicit field data structure.'),
                ('DELAYED_LOAD_ARCHIVE', 'Delayed Load Archive',
@@ -2042,6 +2044,12 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         description="Path to the SPGrid simulation data to render.",
         subtype="FILE_PATH",
         default='')
+
+    density_data = EnumProperty(
+        name = "Density Data Structure",
+        description = "Data format to read density from.",
+        items=[("TCB", 'TCB Data', 'Reads topology optimization result from .tcb file.')],
+        default="TCB")
 
     levelset_data = EnumProperty(
         name = "Levelset Data Structure",
