@@ -2075,6 +2075,11 @@ class RendermanObjectSettings(bpy.types.PropertyGroup):
         description="Threshold of density that is to be considered solid.",
         min=0, default=0)
 
+    tcb_density_scale = FloatProperty(
+        name="Density Scale",
+        description="Scale value to make volume looks denser(It is faster to do it here than in the shader).",
+        min=0, default=1)
+
     tcb_frame = IntProperty(
         name="Frame",
         description="Frame of the simulation to read data from.",

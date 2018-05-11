@@ -1123,12 +1123,13 @@ class OBJECT_PT_renderman_object_geometry(Panel, CollectionPanel):
                                   "collection.add_remove", "object.renderman",
                                   "openvdb_channels", "openvdb_channel_index")
         elif rm.geometry_source == 'VOLUME':
-            col.prop(rm, 'density_data')
+            col.prop(rm,"density_data")
             col.prop(rm,"path_plugin")
 
-            if rm.levelset_data == 'TCB':
+            if rm.density_data == 'TCB':
                 col.prop(rm,"path_tcb_datapath")
                 col.prop(rm,"tcb_frame")
+                col.prop(rm,"tcb_density_scale")
 
         elif rm.geometry_source in ('LEVELSET','SMOKE_VOLUME'):
             col.prop(rm,"path_tcb_datapath")

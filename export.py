@@ -1012,10 +1012,11 @@ def geometry_source_rib(ri, scene, ob):
         elif rm.geometry_source == 'VOLUME':
             rm = ob.renderman
             tform = []
-            params = {"constant string[1] blobbydso:stringargs": [
-                rm.path_tcb_datapath, "density"],"constant float blobbydso:floatargs": [rm.tcb_frame], "varying float density": []}
+            params = {"constant string[1] blobbydso:stringargs": [rm.path_tcb_datapath, "density"],
+                      "constant float[2] blobbydso:floatargs": [rm.tcb_frame,rm.tcb_density_scale],
+                      "varying float density": []}
             
-            if rm.levelset_data == 'TCB':
+            if rm.density_data == 'TCB':
                 ri.Volume("blobbydso:"+rm.path_plugin, rib(bounds), [0, 0, 0], params)
 
         elif rm.geometry_source == 'LEVELSET':
