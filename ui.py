@@ -1132,7 +1132,6 @@ class OBJECT_PT_renderman_object_geometry(Panel, CollectionPanel):
                 col.prop(rm,"tcb_density_scale")
 
         elif rm.geometry_source in ('LEVELSET','SMOKE_VOLUME'):
-            col.prop(rm,"path_tcb_datapath")
             col.prop(rm,"levelset_data")
             col.prop(rm,"path_plugin")
 
